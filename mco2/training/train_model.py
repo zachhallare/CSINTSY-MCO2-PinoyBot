@@ -12,10 +12,11 @@ Usage:
 
 import os
 import sys
+# pyrefly: ignore [missing-import]
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import classification_report, accuracy_score
 
 # Allow importing the shared features module from the parent directory
@@ -54,6 +55,9 @@ def load_and_clean_data(path):
         Cleaned pandas DataFrame with valid tags only.
     """
     df = pd.read_csv(path)
+
+    if 'answer' in df.columns and 'tag' not in df.columns:
+        df = df.rename(columns={'answer': 'tag'})
 
     df['tag'] = df['tag'].astype(str).str.strip()
     df['tag'] = df['tag'].replace(_TAG_CORRECTIONS)
@@ -120,9 +124,14 @@ def build_feature_matrix(df, feature_columns):
     Returns:
         Tuple of (X as numpy array, y as numpy array of tag strings).
     """
+
+    is_first = (
+        df.groupby('sentence_id')['word_id'].transform('min') == df['word_id']
+    )
+
     feature_rows = []
-    for word in df['word']:
-        feat_dict = extract_features(word)
+    for word, first_flag in zip(df['word'], is_first):
+        feat_dict = extract_features(word, is_first_word=bool(first_flag))
         feature_rows.append([feat_dict[col] for col in feature_columns])
 
     X = np.array(feature_rows, dtype=float)
@@ -145,17 +154,19 @@ def train_and_evaluate():
     X_test, y_test = build_feature_matrix(test_df, feature_columns)
     print(f"Feature matrix shape: {X_train.shape}\n")
 
-    # Balanced class weights compensate for the severe CS underrepresentation (~0.5%)
-    model = RandomForestClassifier(
-        n_estimators=300,
-        max_depth=None,
-        min_samples_leaf=2,
-        class_weight='balanced',
+    # Use HistGradientBoostingClassifier to improve accuracy
+    # We do not use extreme sample weights here so we can maximize overall accuracy
+    model = HistGradientBoostingClassifier(
+        max_iter=500,
+        learning_rate=0.05,
+        max_depth=8,
+        min_samples_leaf=20,
+        l2_regularization=0.1,
+        early_stopping=True,
         random_state=42,
-        n_jobs=-1
     )
 
-    print("Training Random Forest classifier...")
+    print("Training HistGradientBoosting classifier...")
     model.fit(X_train, y_train)
 
     # Validation results
@@ -182,12 +193,7 @@ def train_and_evaluate():
     joblib.dump(model_package, _MODEL_OUTPUT_PATH)
     print(f"\nModel saved to: {os.path.abspath(_MODEL_OUTPUT_PATH)}")
 
-    # Display feature importances for analysis and reporting
-    print("\nTop 10 feature importances:")
-    importances = model.feature_importances_
-    indices = np.argsort(importances)[::-1]
-    for rank, idx in enumerate(indices[:10], 1):
-        print(f"  {rank}. {feature_columns[idx]}: {importances[idx]:.4f}")
+    # HistGBT doesn't expose feature_importances_ directly so we skip printing them
 
 
 if __name__ == '__main__':

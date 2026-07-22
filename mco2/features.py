@@ -8,8 +8,8 @@ Converts word tokens into numeric feature vectors for classification.
 import string
 
 
-# Letters uncommon in native Filipino orthography
-_FOREIGN_LETTERS = set('cfjqvxz')
+# Letters uncommon in native Filipino orthography (removed 'c' to allow common loanwords like Chinito)
+_FOREIGN_LETTERS = set('fjqvxz')
 
 # Common Filipino verb/noun prefixes, ordered longest-first for greedy matching
 _FIL_PREFIXES = [
@@ -24,11 +24,14 @@ _FIL_PREFIXES = [
 _FIL_SUFFIXES = ['uhan', 'ahan', 'ihan', 'hin', 'han', 'an', 'in', 'ng']
 
 # Common English morphological suffixes, ordered longest-first
+# NOTE: short 2-letter endings ('al', 'er', 'ed', 'ly') were removed —
+# they're too generic and appear about as often in Filipino words
+# (e.g. "bawal", "tagal", "opisyal") as in English ones, so they added
+# noise rather than signal. Kept only endings that are rare in Filipino.
 _ENG_SUFFIXES = [
     'tion', 'sion', 'ment', 'ness', 'able', 'ible', 'ious', 'eous',
     'ous', 'ive', 'ing', 'ful', 'less', 'ist', 'ism',
-    'ity', 'ence', 'ance', 'ers', 'est',
-    'ed', 'ly', 'er', 'al'
+    'ity', 'ence', 'ance', 'ers', 'est'
 ]
 
 # Doubled consonants are more frequent in English than Filipino
@@ -36,15 +39,24 @@ _DOUBLE_CONSONANTS = [
     'tt', 'ss', 'll', 'dd', 'bb', 'mm', 'nn', 'rr', 'ff', 'pp', 'cc', 'gg'
 ]
 
+# English consonant digraphs — extremely rare in native Filipino orthography
+_ENG_DIGRAPHS = [
+    'th', 'sh', 'wh', 'ph', 'gh', 'ck', 'qu'
+]
+
 _VOWELS = set('aeiou')
 
 
-def extract_features(token):
+def extract_features(token, is_first_word=False):
     """
     Convert a word token into a dictionary of numeric features.
 
     Args:
         token: A string representing a single word.
+        is_first_word: True if this token is the first word of its
+            sentence. Lets the model separate capitalization caused by
+            sentence position from capitalization that signals a proper
+            noun (e.g. "Love" at a sentence start vs. "EDSA" mid-sentence).
 
     Returns:
         Dictionary mapping feature names to numeric values (int or float).
@@ -120,6 +132,32 @@ def extract_features(token):
         features['has_hyphen'] and features['has_fil_prefix']
     )
 
+    # English digraph detection — th/sh/ch/wh/ph/gh/ck/qu are rare in Filipino
+    features['has_eng_digraph'] = int(
+        any(dg in lower for dg in _ENG_DIGRAPHS)
+    )
+
+    # Filipino reduplication: hyphenated word where both halves are identical
+    # (e.g., "iba-iba", "kain-kain", "bahay-bahay")
+    features['is_reduplicated'] = _is_reduplicated(lower)
+
+    # Filipino phonological endings — -ng and -n are highly productive in Filipino
+    features['ends_with_ng'] = int(lower.endswith('ng'))
+    features['ends_with_n'] = int(
+        bool(lower) and lower[-1] == 'n' and not lower.endswith('ng')
+    )
+
+    # Strong CS signal: Filipino prefix AND English suffix on the same word
+    # (e.g., "naglunch" has nag- prefix + no eng suffix, but "nagmeeting" or
+    # "nagreact" may have both signals simultaneously)
+    features['has_cs_pattern'] = int(
+        features['has_fil_prefix'] == 1 and features['has_eng_suffix'] == 1
+    )
+
+    # Positional signal: sentence-initial position explains capitalization
+    # that has nothing to do with being a proper noun.
+    features['is_first_word'] = int(is_first_word)
+
     return features
 
 
@@ -181,4 +219,22 @@ def _has_repeated_pattern(lower_word):
         remainder = len(lower_word) % pat_len
         if repeats >= 2 and lower_word == pattern * repeats + pattern[:remainder]:
             return 1
+    return 0
+
+
+def _is_reduplicated(lower_word):
+    """
+    Detect Filipino morphological reduplication via hyphen.
+
+    A reduplicated word contains a hyphen where the substring before the hyphen
+    is identical to the substring after it (e.g., "iba-iba", "kain-kain",
+    "bahay-bahay"). Both halves must be at least 2 characters long.
+    """
+    if '-' not in lower_word:
+        return 0
+    idx = lower_word.index('-')
+    left = lower_word[:idx]
+    right = lower_word[idx + 1:]
+    if len(left) >= 2 and left == right:
+        return 1
     return 0
