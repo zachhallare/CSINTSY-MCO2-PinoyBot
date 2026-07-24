@@ -28,8 +28,6 @@ mco2/
 ├── dataset.csv            # Annotated training data (not always included — see below)
 ├── training/
 │   └── train_model.py     # Full training pipeline (load → split → train → evaluate → save)
-├── documentation.md        # Full technical writeup (features, design decisions, metrics)
-└── specifications.pdf      # Original assignment spec
 ```
 
 ## Setup
@@ -71,10 +69,6 @@ If you change `dataset.csv` or `features.py`, re-run training so `trained_model.
 ```bash
 python training/train_model.py
 ```
-
-## Docs
-
-For a deeper dive — feature rationale, worked examples, per-class precision/recall, and known limitations (e.g. weaker performance on the `CS` and `ENG` classes) — see [`documentation.md`](documentation.md).
 
 ## Restrictions honored
 
